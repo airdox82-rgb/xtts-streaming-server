@@ -43,6 +43,10 @@ def clone_speaker(upload_file, clone_speaker_name, cloned_speaker_names):
     return upload_file, clone_speaker_name, cloned_speaker_names, gr.Dropdown.update(choices=cloned_speaker_names)
 
 def tts(text, speaker_type, speaker_name_studio, speaker_name_custom, lang):
+
+
+    if speaker_type == 'Cloned' and not speaker_name_custom:
+        raise gr.Error("Kein geklonter Sprecher verfügbar. Bitte klone zuerst einen Sprecher im Tab 'Clone a new speaker'.")
     embeddings = STUDIO_SPEAKERS[speaker_name_studio] if speaker_type == 'Studio' else cloned_speakers[speaker_name_custom]
     generated_audio = requests.post(
         SERVER_URL + "/tts",
