@@ -4,10 +4,13 @@ import base64
 import tempfile
 import json
 import os
+import uuid
+import pathlib
 
 
 SERVER_URL = 'http://localhost:8000'
 OUTPUT = "./demo_outputs"
+SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 cloned_speakers = {}
 
 print("Preparing file structure...")
@@ -34,31 +37,61 @@ except:
 
 
 def clone_speaker(upload_file, clone_speaker_name, cloned_speaker_names):
+    if not clone_speaker_name.strip():
+        raise gr.Error("Bitte gib einen Namen für den Sprecher ein.")
+
+    if not upload_file:
+        raise gr.Error("Bitte lade eine Referenz-Audiodatei hoch.")
+
     files = {"wav_file": ("reference.wav", open(upload_file, "rb"))}
-    embeddings = requests.post(SERVER_URL + "/clone_speaker", files=files).json()
-    with open(os.path.join(OUTPUT, "cloned_speakers", clone_speaker_name + ".json"), "w") as fp:
+    response = requests.post(SERVER_URL + "/clone_speaker", files=files)
+
+    if response.status_code != 200:
+        try:
+            error_msg = response.json().get("detail", "Unbekannter Serverfehler beim Klonen.")
+        except requests.exceptions.JSONDecodeError:
+            error_msg = response.text
+        raise gr.Error(f"Serverfehler: {response.status_code} - {error_msg}")
+
+    embeddings = response.json()
+    speaker_filename = f"{clone_speaker_name}.json"
+    speaker_path = os.path.join(OUTPUT, "cloned_speakers", speaker_filename)
+
+    with open(speaker_path, "w") as fp:
         json.dump(embeddings, fp)
+
     cloned_speakers[clone_speaker_name] = embeddings
-    cloned_speaker_names.append(clone_speaker_name)
-    return upload_file, clone_speaker_name, cloned_speaker_names, gr.Dropdown.update(choices=cloned_speaker_names)
+    
+    if clone_speaker_name not in cloned_speaker_names:
+        cloned_speaker_names.append(clone_speaker_name)
+
+    return upload_file, clone_speaker_name, cloned_speaker_names, gr.Dropdown.update(choices=cloned_speaker_names, value=clone_speaker_name)
 
 def tts(text, speaker_type, speaker_name_studio, speaker_name_custom, lang):
     if speaker_type == 'Cloned' and not speaker_name_custom:
         raise gr.Error("Kein geklonter Sprecher verfügbar. Bitte klone zuerst einen Sprecher im Tab 'Clone a new speaker'.")
+
     embeddings = STUDIO_SPEAKERS[speaker_name_studio] if speaker_type == 'Studio' else cloned_speakers[speaker_name_custom]
-    generated_audio = requests.post(
-        SERVER_URL + "/tts",
-        json={
-            "text": text,
-            "language": lang,
-            "speaker_embedding": embeddings["speaker_embedding"],
-            "gpt_cond_latent": embeddings["gpt_cond_latent"]
-        }
-    ).content
-    generated_audio_path = os.path.join("demo_outputs", "generated_audios", next(tempfile._get_candidate_names()) + ".wav")
+    
+    payload = {
+        "text": text,
+        "language": lang,
+        "speaker_embedding": embeddings["speaker_embedding"],
+        "gpt_cond_latent": embeddings["gpt_cond_latent"]
+    }
+    response = requests.post(SERVER_URL + "/tts", json=payload)
+
+    if response.status_code != 200:
+        raise gr.Error(f"Serverfehler: {response.status_code} - {response.text}")
+
+    generated_audio_base64 = response.content
+    generated_audio_path = os.path.join(OUTPUT, "generated_audios", f"{uuid.uuid4()}.wav")
     with open(generated_audio_path, "wb") as fp:
-        fp.write(base64.b64decode(generated_audio))
-        return fp.name
+        try:
+            fp.write(base64.b64decode(generated_audio_base64))
+            return fp.name
+        except (TypeError, base64.binascii.Error) as e:
+            raise gr.Error(f"Fehler beim Dekodieren der Audiodaten vom Server: {e}")
 
 with gr.Blocks() as demo:
     cloned_speaker_names = gr.State(list(cloned_speakers.keys()))
@@ -102,7 +135,11 @@ with gr.Blocks() as demo:
 
 if __name__ == "__main__":
     print("Warming up server...")
-    with open("test/default_speaker.json", "r") as fp:
+    default_speaker_path = SCRIPT_DIR / "test" / "default_speaker.json"
+    if not default_speaker_path.exists():
+        raise FileNotFoundError(f"Die Standard-Sprecherdatei wurde nicht gefunden: {default_speaker_path}")
+
+    with open(default_speaker_path, "r") as fp:
         warmup_speaker = json.load(fp)
     resp = requests.post(
         SERVER_URL + "/tts",
