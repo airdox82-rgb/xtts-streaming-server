@@ -43,17 +43,19 @@ def clone_speaker(upload_file, clone_speaker_name, cloned_speaker_names):
     if not upload_file:
         raise gr.Error("Bitte lade eine Referenz-Audiodatei hoch.")
 
-    files = {"wav_file": ("reference.wav", open(upload_file, "rb"))}
-    response = requests.post(SERVER_URL + "/clone_speaker", files=files)
+    with open(upload_file, "rb") as f:
+        files = {"wav_file": ("reference.wav", f)}
+        response = requests.post(SERVER_URL + "/clone_speaker", files=files)
 
-    if response.status_code != 200:
-        try:
-            error_msg = response.json().get("detail", "Unbekannter Serverfehler beim Klonen.")
-        except requests.exceptions.JSONDecodeError:
-            error_msg = response.text
-        raise gr.Error(f"Serverfehler: {response.status_code} - {error_msg}")
+        if response.status_code != 200:
+            try:
+                error_msg = response.json().get("detail", "Unbekannter Serverfehler beim Klonen.")
+            except requests.exceptions.JSONDecodeError:
+                error_msg = response.text
+            raise gr.Error(f"Serverfehler: {response.status_code} - {error_msg}")
 
-    embeddings = response.json()
+        embeddings = response.json()
+
     speaker_filename = f"{clone_speaker_name}.json"
     speaker_path = os.path.join(OUTPUT, "cloned_speakers", speaker_filename)
 
@@ -65,7 +67,7 @@ def clone_speaker(upload_file, clone_speaker_name, cloned_speaker_names):
     if clone_speaker_name not in cloned_speaker_names:
         cloned_speaker_names.append(clone_speaker_name)
 
-    return upload_file, clone_speaker_name, cloned_speaker_names, gr.Dropdown.update(choices=cloned_speaker_names, value=clone_speaker_name)
+    return upload_file, clone_speaker_name, cloned_speaker_names, gr.Dropdown(label="Cloned speaker", choices=cloned_speaker_names, value=clone_speaker_name)
 
 def tts(text, speaker_type, speaker_name_studio, speaker_name_custom, lang):
     if speaker_type == 'Cloned' and not speaker_name_custom:
